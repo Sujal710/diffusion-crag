@@ -11,3 +11,4 @@ __pycache__/
 
 # Generated at runtime
 crag_app/outputs/
+crag_app/data/        # user accounts (password hashes)

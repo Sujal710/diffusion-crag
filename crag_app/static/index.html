@@ -50,6 +50,10 @@
 <main>
   <h1>CRAG Assistant</h1>
   <p class="sub">Upload a PDF or book, then ask questions. If your documents can't answer, it searches the web.</p>
+  <div class="row" style="margin:-8px 0 16px">
+    <span class="status">Signed in as <b id="userName"></b></span>
+    <button class="ghost" id="logoutBtn" style="padding:4px 12px">Log out</button>
+  </div>
 
   <section class="card">
     <h2>1. Add a PDF / book</h2>
@@ -137,6 +141,32 @@
 
 <script>
 const $ = id => document.getElementById(id);
+
+// ---- login: every request carries the JWT; no token or a 401 sends you back to /login ----
+const TOKEN_KEY = "crag_token", USER_KEY = "crag_user";
+function getToken() { try { return localStorage.getItem(TOKEN_KEY); } catch { return null; } }
+function logout() {
+  try { localStorage.removeItem(TOKEN_KEY); localStorage.removeItem(USER_KEY); } catch {}
+  location.replace("/login");
+}
+if (!getToken()) logout();
+try { $("userName").textContent = JSON.parse(localStorage.getItem(USER_KEY)).name; } catch { $("userName").textContent = "you"; }
+$("logoutBtn").onclick = logout;
+
+const _fetch = window.fetch.bind(window);
+window.fetch = async (url, opts = {}) => {
+  opts.headers = { ...(opts.headers || {}), Authorization: "Bearer " + getToken() };
+  const res = await _fetch(url, opts);
+  if (res.status === 401) logout();
+  return res;
+};
+
+// Videos and frames are protected too, so they are fetched with the token and shown from a blob URL.
+async function blobUrl(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(await errText(res));
+  return URL.createObjectURL(await res.blob());
+}
 
 // Ask the user which namespace the new PDF should go into. Resolves to a name, or null if cancelled.
 function askNamespace(suggested, existing) {
@@ -313,9 +343,11 @@ $("vBtn").onclick = async () => {
       if (j.status === "error") throw new Error(j.error);
       if (j.status === "done") {
         const r = j.result;
-        $("vVideo").src = r.video; $("vDownload").href = r.video;
+        $("vStatus").textContent = "Loading the video...";
+        const [vUrl, ...frameUrls] = await Promise.all([blobUrl(r.video), ...r.frames.map(blobUrl)]);
+        $("vVideo").src = vUrl; $("vDownload").href = vUrl;
         const strip = $("vFrameStrip"); strip.replaceChildren();
-        r.frames.forEach((src, i) => {
+        frameUrls.forEach((src, i) => {
           const img = document.createElement("img");
           img.src = src; img.title = r.scenes[i]; img.alt = r.scenes[i];
           img.style.cssText = "height:64px;border-radius:6px";

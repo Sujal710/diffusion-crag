@@ -14,14 +14,17 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from pypdf import PdfReader
 
-from . import llm, vectorstore, video
+from . import auth, llm, vectorstore, video
 from .graph import run_crag
 
 app = FastAPI(title="CRAG API", version="1.0")
+app.middleware("http")(auth.auth_middleware)  # every route except auth.PUBLIC_PATHS needs a JWT
+app.include_router(auth.router)
 
 MAX_PDF_BYTES = 50 * 1024 * 1024
 MAX_OCR_PAGES = 1500  # OCR takes a second or two per page
 FRONTEND = Path(__file__).parent / "static" / "index.html"
+LOGIN_PAGE = Path(__file__).parent / "static" / "login.html"
 NAMESPACE_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
@@ -175,6 +178,11 @@ class IngestRequest(BaseModel):
 @app.get("/", include_in_schema=False)
 async def index():
     return FileResponse(FRONTEND)
+
+
+@app.get("/login", include_in_schema=False)
+async def login_page():
+    return FileResponse(LOGIN_PAGE)
 
 
 @app.get("/health")

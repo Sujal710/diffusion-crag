@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Log in · CRAG Assistant</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1c2128; --muted:#667085; --line:#e4e7ec; --accent:#2f6fed; --bad:#b42318; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#12151a; --card:#1b2028; --text:#e7eaee; --muted:#9aa3af; --line:#2c333d; --accent:#6a9bff; --bad:#ff7b72; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:16px;
+         background:var(--bg); color:var(--text); font:15px/1.5 system-ui, sans-serif; }
+  .box { width:100%; max-width:380px; background:var(--card); border:1px solid var(--line); border-radius:14px; padding:24px; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  .sub { color:var(--muted); margin:0 0 18px; }
+  .tabs { display:flex; gap:4px; background:var(--bg); border:1px solid var(--line); border-radius:10px; padding:3px; margin-bottom:16px; }
+  .tabs button { flex:1; background:transparent; color:var(--muted); border:0; border-radius:8px; padding:8px; font:inherit; cursor:pointer; }
+  .tabs button.on { background:var(--card); color:var(--text); box-shadow:0 0 0 1px var(--line); }
+  label { display:block; margin:12px 0 4px; font-size:14px; }
+  input { width:100%; padding:10px; border-radius:8px; border:1px solid var(--line); background:var(--bg); color:var(--text); font:inherit; }
+  input:focus { outline:2px solid var(--accent); outline-offset:1px; }
+  .submit { width:100%; margin-top:18px; background:var(--accent); color:#fff; border:0; border-radius:8px; padding:11px; font:inherit; cursor:pointer; }
+  .submit:disabled { opacity:.5; cursor:not-allowed; }
+  .err { color:var(--bad); font-size:14px; min-height:20px; margin:10px 0 0; }
+  .hint { color:var(--muted); font-size:13px; margin:4px 0 0; }
+</style>
+</head>
+<body>
+<main class="box">
+  <h1>CRAG Assistant</h1>
+  <p class="sub">Log in to upload documents, ask questions and make videos.</p>
+
+  <div class="tabs" role="tablist">
+    <button id="tabLogin" class="on" role="tab" type="button">Log in</button>
+    <button id="tabSignup" role="tab" type="button">Sign up</button>
+  </div>
+
+  <form id="form" novalidate>
+    <div id="nameRow" hidden>
+      <label for="name">Name</label>
+      <input id="name" autocomplete="name" maxlength="60">
+    </div>
+    <label for="email">Email</label>
+    <input id="email" type="email" autocomplete="email" required>
+    <label for="password">Password</label>
+    <input id="password" type="password" autocomplete="current-password" maxlength="72" required>
+    <p class="hint" id="pwHint" hidden>At least 8 characters.</p>
+    <div class="err" id="err" role="alert"></div>
+    <button class="submit" id="submit" type="submit">Log in</button>
+  </form>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const TOKEN_KEY = "crag_token", USER_KEY = "crag_user";
+let mode = "login";
+
+function store(k, v) { try { localStorage.setItem(k, v); } catch {} }
+function load(k) { try { return localStorage.getItem(k); } catch { return null; } }
+
+// Already logged in? Check the saved token and go straight to the app.
+(async () => {
+  const t = load(TOKEN_KEY);
+  if (!t) return;
+  try {
+    const r = await fetch("/auth/me", { headers: { Authorization: "Bearer " + t } });
+    if (r.ok) location.replace("/");
+  } catch {}
+})();
+
+function setMode(m) {
+  mode = m;
+  const signup = m === "signup";
+  $("tabLogin").classList.toggle("on", !signup);
+  $("tabSignup").classList.toggle("on", signup);
+  $("nameRow").hidden = !signup;
+  $("pwHint").hidden = !signup;
+  $("password").autocomplete = signup ? "new-password" : "current-password";
+  $("submit").textContent = signup ? "Create account" : "Log in";
+  $("err").textContent = "";
+}
+$("tabLogin").onclick = () => setMode("login");
+$("tabSignup").onclick = () => setMode("signup");
+
+$("form").onsubmit = async e => {
+  e.preventDefault();
+  const email = $("email").value.trim(), password = $("password").value, name = $("name").value.trim();
+  if (!email || !password) { $("err").textContent = "Enter your email and password."; return; }
+  if (mode === "signup" && !name) { $("err").textContent = "Enter your name."; return; }
+  if (mode === "signup" && password.length < 8) { $("err").textContent = "Password must be at least 8 characters."; return; }
+
+  $("submit").disabled = true; $("err").textContent = "";
+  try {
+    const res = await fetch("/auth/" + mode, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(mode === "signup" ? { name, email, password } : { email, password }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const d = data.detail;
+      throw new Error(typeof d === "string" ? d : Array.isArray(d) ? "Please check the details you entered." : "Something went wrong.");
+    }
+    store(TOKEN_KEY, data.token);
+    store(USER_KEY, JSON.stringify(data.user));
+    location.replace("/");
+  } catch (err) {
+    $("err").textContent = err.message || String(err);
+  } finally { $("submit").disabled = false; }
+};
+</script>
+</body>
+</html>

@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     video_width: int = 1024        # keep both multiples of 64
     video_height: int = 576
 
+    # --- Login (JWT) ---
+    jwt_secret: str = ""           # long random string; if empty a temporary one is used (logins reset on restart)
+    jwt_expire_minutes: int = 1440 # how long a login stays valid (24 h)
+    allow_signup: bool = True      # set false to stop new accounts being created
+
     # --- CRAG knobs ---
     top_k: int = 5
     upper_threshold: float = 0.7   # any doc >= this  -> CORRECT
