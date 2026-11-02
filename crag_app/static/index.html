@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CRAG Assistant</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1c2128; --muted:#667085; --line:#e4e7ec; --accent:#2f6fed; --ok:#12805c; --bad:#b42318; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#12151a; --card:#1b2028; --text:#e7eaee; --muted:#9aa3af; --line:#2c333d; --accent:#6a9bff; --ok:#3ecf9a; --bad:#ff7b72; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui, sans-serif; }
+  main { max-width:760px; margin:0 auto; padding:24px 16px 48px; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  .sub { color:var(--muted); margin:0 0 20px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:16px; }
+  .card h2 { font-size:15px; margin:0 0 10px; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:9px 16px; font:inherit; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  button.ghost { background:transparent; color:var(--accent); border:1px solid var(--line); }
+  input[type=file] { color:var(--muted); max-width:100%; }
+  textarea { width:100%; min-height:70px; resize:vertical; padding:10px; border-radius:8px; border:1px solid var(--line); background:var(--bg); color:var(--text); font:inherit; }
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .status { color:var(--muted); font-size:14px; }
+  .answer { white-space:pre-wrap; }
+  .meta { margin-top:12px; font-size:13px; color:var(--muted); }
+  .pill { display:inline-block; padding:1px 9px; border-radius:99px; border:1px solid var(--line); margin-right:6px; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); }
+  table { width:100%; border-collapse:collapse; font-size:14px; margin-bottom:10px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); }
+  th { color:var(--muted); font-weight:500; }
+  td:nth-child(n+3), th:nth-child(n+3) { text-align:right; width:70px; }
+  details { margin-top:8px; font-size:13px; color:var(--muted); }
+  /* popup */
+  #overlay, #nsOverlay { position:fixed; inset:0; background:rgba(0,0,0,.45); display:none; align-items:center; justify-content:center; padding:16px; }
+  #overlay.show, #nsOverlay.show { display:flex; }
+  .modal.left { text-align:left; }
+  .modal label { display:block; margin:10px 0 4px; }
+  .modal input[type=text], .modal select, .ask-ns { width:100%; padding:8px; border-radius:8px; border:1px solid var(--line); background:var(--bg); color:var(--text); font:inherit; }
+  .ask-ns { width:auto; max-width:100%; }
+  .err { color:var(--bad); font-size:13px; min-height:18px; margin:6px 0; }
+  .modal { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:24px; max-width:380px; width:100%; text-align:center; }
+  .modal .tick { font-size:38px; line-height:1; }
+  .modal h3 { margin:10px 0 6px; font-size:18px; }
+  .modal p { margin:0 0 16px; color:var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>CRAG Assistant</h1>
+  <p class="sub">Upload a PDF or book, then ask questions. If your documents can't answer, it searches the web.</p>
+
+  <section class="card">
+    <h2>1. Add a PDF / book</h2>
+    <div class="row">
+      <input type="file" id="file" accept="application/pdf,.pdf">
+      <button id="uploadBtn">Upload</button>
+      <button class="ghost" id="stopBtn" hidden>Stop and keep what's read so far</button>
+    </div>
+    <p class="status" id="uploadStatus"></p>
+  </section>
+
+  <section class="card">
+    <h2>Knowledge base <span class="status" id="kbTotal"></span></h2>
+    <table id="kbTable" hidden>
+      <thead><tr><th>Document</th><th>Namespace</th><th>Pages</th><th>Chunks</th></tr></thead>
+      <tbody id="kbBody"></tbody>
+    </table>
+    <p class="status" id="kbStatus">Loading...</p>
+    <div class="row">
+      <button class="ghost" id="kbRefresh">Refresh</button>
+      <button class="ghost" id="kbSummarise">Summarise contents</button>
+    </div>
+    <div class="answer" id="kbSummary" style="margin-top:12px"></div>
+  </section>
+
+  <section class="card">
+    <h2>2. Ask a question</h2>
+    <textarea id="q" placeholder="e.g. How many leave days do I get?"></textarea>
+    <div class="row" style="margin-top:10px">
+      <label class="status" for="nsSearch">Search in:</label>
+      <select id="nsSearch" class="ask-ns"><option value="">All namespaces</option></select>
+      <button id="askBtn">Ask</button>
+      <span class="status" id="askStatus"></span>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>3. Make a video from text</h2>
+    <textarea id="vPrompt" placeholder="e.g. A paper boat sailing down a rainy street at dusk"></textarea>
+    <div class="row" style="margin-top:10px">
+      <label class="status" for="vFrames">Frames:</label>
+      <input type="number" id="vFrames" min="2" max="12" value="6" style="width:70px;padding:8px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text)">
+      <button id="vBtn">Generate video</button>
+      <span class="status" id="vStatus"></span>
+    </div>
+    <div id="vOut" hidden style="margin-top:14px">
+      <video id="vVideo" controls style="width:100%;border-radius:8px;background:#000"></video>
+      <p><a id="vDownload" download="video.mp4">Download MP4</a></p>
+      <div id="vFrameStrip" class="row" style="gap:6px"></div>
+    </div>
+  </section>
+
+  <section class="card" id="result" hidden>
+    <h2>Answer</h2>
+    <div class="answer" id="answer"></div>
+    <div class="meta" id="meta"></div>
+    <div class="row" style="margin-top:12px">
+      <button class="ghost" id="toVideoBtn">🎬 Convert this answer to video</button>
+    </div>
+    <details><summary>How it got there (trace)</summary><pre id="trace"></pre></details>
+  </section>
+</main>
+
+<div id="overlay" role="dialog" aria-modal="true" aria-labelledby="mTitle">
+  <div class="modal">
+    <div class="tick" id="mIcon">✅</div>
+    <h3 id="mTitle"></h3>
+    <p id="mBody"></p>
+    <button id="mClose">Carry on with your query</button>
+  </div>
+</div>
+
+<div id="nsOverlay" role="dialog" aria-modal="true" aria-labelledby="nsTitle">
+  <div class="modal left">
+    <h3 id="nsTitle">This is a new PDF</h3>
+    <p>Each book lives in its own namespace. Create a new one, or add this PDF to an existing one.</p>
+    <label><input type="radio" name="nsMode" value="new" checked> Create a new namespace</label>
+    <input type="text" id="nsNew" maxlength="64" placeholder="e.g. hr-policy">
+    <label><input type="radio" name="nsMode" value="existing"> Add to an existing namespace</label>
+    <select id="nsExisting"></select>
+    <div class="err" id="nsErr"></div>
+    <div class="row"><button id="nsOk">Upload</button><button class="ghost" id="nsCancel">Cancel</button></div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+// Ask the user which namespace the new PDF should go into. Resolves to a name, or null if cancelled.
+function askNamespace(suggested, existing) {
+  return new Promise(resolve => {
+    $("nsNew").value = suggested;
+    $("nsErr").textContent = "";
+    const sel = $("nsExisting"); sel.replaceChildren();
+    for (const n of existing) { const o = document.createElement("option"); o.value = o.textContent = n; sel.appendChild(o); }
+    const radios = document.getElementsByName("nsMode");
+    radios[0].checked = true;
+    radios[1].disabled = existing.length === 0;
+    const done = v => { $("nsOverlay").classList.remove("show"); $("nsOk").onclick = $("nsCancel").onclick = null; resolve(v); };
+    $("nsOk").onclick = () => {
+      const useNew = radios[0].checked;
+      const name = (useNew ? $("nsNew").value : sel.value).trim();
+      if (!/^[A-Za-z0-9_-]{1,64}$/.test(name)) { $("nsErr").textContent = "Use letters, numbers, - and _ only (max 64)."; return; }
+      if (useNew && existing.includes(name)) { $("nsErr").textContent = "That namespace already exists. Pick another name or choose it under 'existing'."; return; }
+      done(name);
+    };
+    $("nsCancel").onclick = () => done(null);
+    $("nsOverlay").classList.add("show");
+    $("nsNew").focus();
+  });
+}
+
+function popup(icon, title, body, btn) {
+  $("mIcon").textContent = icon;
+  $("mTitle").textContent = title;
+  $("mBody").textContent = body;
+  $("mClose").textContent = btn;
+  $("overlay").classList.add("show");
+  $("mClose").focus();
+}
+function closePopup() { $("overlay").classList.remove("show"); $("q").focus(); }
+$("mClose").onclick = closePopup;
+$("overlay").onclick = e => { if (e.target.id === "overlay") closePopup(); };
+document.addEventListener("keydown", e => { if (e.key === "Escape") closePopup(); });
+
+async function errText(res) {
+  try { const j = await res.json(); return j.detail || res.statusText; } catch { return res.statusText; }
+}
+
+$("uploadBtn").onclick = async () => {
+  const f = $("file").files[0];
+  if (!f) { $("uploadStatus").textContent = "Choose a PDF first."; return; }
+  $("uploadBtn").disabled = true;
+  try {
+    // Step 1: is it already stored?
+    $("uploadStatus").textContent = "Checking whether " + f.name + " is already in the database...";
+    const fd1 = new FormData(); fd1.append("file", f);
+    const chk = await fetch("/ingest/pdf/check", { method: "POST", body: fd1 });
+    if (!chk.ok) throw new Error(await errText(chk));
+    const c = await chk.json();
+    if (c.duplicate) {
+      $("uploadStatus").textContent = "";
+      popup("ℹ️", "Already in the database", c.message, "OK");
+      return;
+    }
+    // Step 2: new PDF -> ask which namespace to keep it in
+    const ns = await askNamespace(c.suggested_namespace, Object.keys(c.namespaces));
+    if (!ns) { $("uploadStatus").textContent = "Upload cancelled."; return; }
+
+    // Step 3: store it
+    $("uploadStatus").textContent = "Uploading " + f.name + "...";
+    const fd = new FormData(); fd.append("file", f); fd.append("namespace", ns);
+    const res = await fetch("/ingest/pdf", { method: "POST", body: fd });
+    if (!res.ok) throw new Error(await errText(res));
+    const { job_id } = await res.json();
+
+    // Stop: the server halts the OCR and still stores every page read up to that point.
+    $("stopBtn").hidden = false;
+    $("stopBtn").disabled = false;
+    $("stopBtn").onclick = async () => {
+      $("stopBtn").disabled = true;
+      $("uploadStatus").textContent = "Stopping... saving what has been read so far.";
+      try { await fetch(`/ingest/jobs/${job_id}/stop`, { method: "POST" }); } catch {}
+    };
+
+    // Large or scanned books take a while: the server works in the background, we poll its progress.
+    let d;
+    for (;;) {
+      await new Promise(r => setTimeout(r, 2000));
+      const jr = await fetch("/ingest/jobs/" + job_id);
+      if (!jr.ok) throw new Error(await errText(jr));
+      const j = await jr.json();
+      if (j.status === "error") throw new Error(j.error);
+      if (j.status === "done") { d = j.result; break; }
+      if (j.stop_requested) { $("uploadStatus").textContent = "Stopping... saving what has been read so far."; continue; }
+      $("uploadStatus").textContent = j.stage + (j.total ? ` (${j.done} of ${j.total})` : "") + "... you can keep this tab open while it works.";
+    }
+    $("uploadStatus").textContent = "Stored: " + d.filename;
+    popup(d.stopped ? "⏹️" : "✅", d.stopped ? "Stopped early: partly inserted" : "PDF inserted",
+      `"${d.filename}" is saved in namespace "${d.namespace}": ${d.pages_with_text} of ${d.pages} pages, ${d.chunks_stored} chunks.` +
+      (d.pages_ocr ? ` ${d.pages_ocr} scanned page${d.pages_ocr === 1 ? " was" : "s were"} read with OCR.` : "") +
+      (d.stopped ? ` ${d.scanned_pages_not_read} scanned page${d.scanned_pages_not_read === 1 ? " was" : "s were"} not read. Questions can only use the pages that were stored.` : ""),
+      "Carry on with your query");
+    $("file").value = "";
+    setTimeout(loadKb, 3000); // Pinecone lists new records after a short delay
+  } catch (e) {
+    $("uploadStatus").textContent = "";
+    popup("⚠️", "Upload failed", String(e.message || e), "Close");
+  } finally { $("uploadBtn").disabled = false; $("stopBtn").hidden = true; }
+};
+
+async function loadKb() {
+  $("kbStatus").textContent = "Loading...";
+  $("kbRefresh").disabled = true;
+  try {
+    const res = await fetch("/documents");
+    if (!res.ok) throw new Error(await errText(res));
+    const d = await res.json();
+    const nsNames = Object.keys(d.namespaces);
+    $("kbTotal").textContent = `(${d.documents.length} document${d.documents.length === 1 ? "" : "s"}, ${nsNames.length} namespace${nsNames.length === 1 ? "" : "s"}, ${d.total_chunks} chunks)`;
+    // keep the "Search in" dropdown in sync, preserving the current choice
+    const sel = $("nsSearch"), keep = sel.value;
+    sel.replaceChildren(new Option("All namespaces", ""));
+    for (const n of nsNames.sort()) sel.appendChild(new Option(`${n} (${d.namespaces[n]})`, n));
+    sel.value = nsNames.includes(keep) ? keep : "";
+    const body = $("kbBody"); body.replaceChildren();
+    for (const doc of d.documents) {
+      const tr = document.createElement("tr");
+      for (const v of [doc.name, doc.namespace, doc.pages || "-", doc.chunks]) {
+        const td = document.createElement("td"); td.textContent = v; tr.appendChild(td);
+      }
+      body.appendChild(tr);
+    }
+    $("kbTable").hidden = d.documents.length === 0;
+    $("kbStatus").textContent = d.documents.length === 0 ? "Nothing stored yet. Upload a PDF above."
+      : d.truncated ? "Showing the first 5000 chunks only." : "";
+  } catch (e) {
+    $("kbStatus").textContent = "Could not load: " + (e.message || e);
+  } finally { $("kbRefresh").disabled = false; }
+}
+$("kbRefresh").onclick = loadKb;
+
+$("kbSummarise").onclick = async () => {
+  $("kbSummarise").disabled = true;
+  $("kbSummary").textContent = "Reading samples and summarising...";
+  try {
+    const res = await fetch("/summary", { method: "POST" });
+    if (!res.ok) throw new Error(await errText(res));
+    $("kbSummary").textContent = (await res.json()).summary;
+  } catch (e) {
+    $("kbSummary").textContent = "Error: " + (e.message || e);
+  } finally { $("kbSummarise").disabled = false; }
+};
+loadKb();
+
+// "Convert this answer to video": fill the video prompt with the question + answer and start generating.
+let lastQA = null;
+$("toVideoBtn").onclick = () => {
+  if (!lastQA) return;
+  if ($("vBtn").disabled) { $("vStatus").textContent = "A video is already being made. Wait for it to finish."; return; }
+  $("vPrompt").value = `Question: ${lastQA.question}\nAnswer: ${lastQA.answer}`.slice(0, 3900);
+  $("vPrompt").scrollIntoView({ behavior: "smooth", block: "center" });
+  $("vBtn").click();
+};
+
+$("vBtn").onclick = async () => {
+  const prompt = $("vPrompt").value.trim();
+  if (prompt.length < 3) { $("vStatus").textContent = "Describe the video first (3+ characters)."; return; }
+  $("vBtn").disabled = true; $("vOut").hidden = true;
+  $("vStatus").textContent = "Starting...";
+  try {
+    const res = await fetch("/video", { method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ prompt, frames: Number($("vFrames").value) || 6 }) });
+    if (!res.ok) throw new Error(await errText(res));
+    const { job_id } = await res.json();
+    for (;;) {
+      await new Promise(r => setTimeout(r, 2000));
+      const jr = await fetch("/video/jobs/" + job_id);
+      if (!jr.ok) throw new Error(await errText(jr));
+      const j = await jr.json();
+      if (j.status === "error") throw new Error(j.error);
+      if (j.status === "done") {
+        const r = j.result;
+        $("vVideo").src = r.video; $("vDownload").href = r.video;
+        const strip = $("vFrameStrip"); strip.replaceChildren();
+        r.frames.forEach((src, i) => {
+          const img = document.createElement("img");
+          img.src = src; img.title = r.scenes[i]; img.alt = r.scenes[i];
+          img.style.cssText = "height:64px;border-radius:6px";
+          strip.appendChild(img);
+        });
+        $("vOut").hidden = false; $("vStatus").textContent = "";
+        break;
+      }
+      $("vStatus").textContent = j.stage + (j.total ? ` (${Math.min(j.done + 1, j.total)} of ${j.total})` : "") + "...";
+    }
+  } catch (e) {
+    $("vStatus").textContent = "Error: " + (e.message || e);
+  } finally { $("vBtn").disabled = false; }
+};
+
+$("askBtn").onclick = async () => {
+  const question = $("q").value.trim();
+  if (question.length < 3) { $("askStatus").textContent = "Type a question (3+ characters)."; return; }
+  $("askBtn").disabled = true;
+  $("askStatus").textContent = "Thinking... (can take 10-60 seconds)";
+  try {
+    const res = await fetch("/ask", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({question, namespace: $("nsSearch").value || null}) });
+    if (!res.ok) throw new Error(await errText(res));
+    const d = await res.json();
+    $("answer").textContent = d.answer;
+    const last = d.trace[d.trace.length - 1] || {};
+    const src = last.web_sources && last.web_sources.length ? " · web sources: " + last.web_sources.length : "";
+    $("meta").innerHTML =
+      `<span class="pill ${d.verified ? "ok" : "bad"}">${d.verified ? "verified" : "not verified"}</span>` +
+      `<span class="pill">${last.verdict || ""}</span><span class="pill">attempts: ${d.attempts}</span>` + src;
+    $("trace").textContent = JSON.stringify(d.trace, null, 2);
+    $("result").hidden = false;
+    lastQA = { question, answer: d.answer };
+    $("askStatus").textContent = "";
+  } catch (e) {
+    $("askStatus").textContent = "Error: " + (e.message || e);
+  } finally { $("askBtn").disabled = false; }
+};
+</script>
+</body>
+</html>

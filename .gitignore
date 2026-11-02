@@ -1,0 +1,13 @@
+# Secrets: never commit these
+.env
+.env.*
+!.env.example
+crag_app/*.txt
+
+# Python / environments
+.venv/
+__pycache__/
+*.pyc
+
+# Generated at runtime
+crag_app/outputs/
