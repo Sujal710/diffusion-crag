@@ -30,7 +30,7 @@ The reframed question is used for retrieval; the final answer always targets the
 | `crag_app/vectorstore.py` | Pinecone serverless index (auto-created on first run), ingest, search, stats (FastEmbed embeddings, run locally) |
 | `crag_app/graph.py` | The LangGraph state machine (CRAG + check loop) |
 | `crag_app/api.py` | FastAPI: `/ingest`, `/ask`, `/stats`, `/health` |
-| `crag_app/mcp_server.py` | MCP server: tools `ask_crag`, `add_documents` |
+| `crag_app/mcp_server.py` | MCP server: tools `ask_crag`, `web_search`, `add_documents` |
 
 ## Setup
 
@@ -84,21 +84,9 @@ Response:
 
 ## Run as an MCP server
 
-**Claude Desktop / Cursor (stdio)** — add to the client's MCP config:
+The server uses HTTP + SSE (no stdio): `python -m crag_app.mcp_server` → `http://127.0.0.1:8001/sse`
 
-```json
-{
-  "mcpServers": {
-    "crag": {
-      "command": "/full/path/to/.venv/bin/python",
-      "args": ["-m", "crag_app.mcp_server"],
-      "cwd": "/full/path/to/crag"
-    }
-  }
-}
-```
-
-**HTTP**: `python -m crag_app.mcp_server --http` → `http://127.0.0.1:8001/mcp`
+Point your MCP client at that URL (e.g. `{"mcpServers": {"crag": {"url": "http://127.0.0.1:8001/sse"}}}`).
 
 Works with MCP Python SDK v2 and v1.
 

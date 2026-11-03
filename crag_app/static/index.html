@@ -62,6 +62,7 @@
       <button id="uploadBtn">Upload</button>
       <button class="ghost" id="stopBtn" hidden>Stop and keep what's read so far</button>
     </div>
+    <progress id="uploadBar" max="100" value="0" hidden style="width:100%;height:10px;margin-top:10px"></progress>
     <p class="status" id="uploadStatus"></p>
   </section>
 
@@ -246,7 +247,7 @@ $("uploadBtn").onclick = async () => {
     };
 
     // Large or scanned books take a while: the server works in the background, we poll its progress.
-    let d;
+    let d, ocrT0 = null;
     for (;;) {
       await new Promise(r => setTimeout(r, 2000));
       const jr = await fetch("/ingest/jobs/" + job_id);
@@ -255,7 +256,21 @@ $("uploadBtn").onclick = async () => {
       if (j.status === "error") throw new Error(j.error);
       if (j.status === "done") { d = j.result; break; }
       if (j.stop_requested) { $("uploadStatus").textContent = "Stopping... saving what has been read so far."; continue; }
-      $("uploadStatus").textContent = j.stage + (j.total ? ` (${j.done} of ${j.total})` : "") + "... you can keep this tab open while it works.";
+      if (j.total) {
+        // page-by-page progress (OCR): "40 of 339 pages done (12%), about 25 min left"
+        const pct = Math.round(100 * j.done / j.total);
+        if (ocrT0 === null) ocrT0 = Date.now();
+        let eta = "";
+        if (j.done >= 2) {
+          const left = ((Date.now() - ocrT0) / j.done) * (j.total - j.done) / 1000;
+          eta = left >= 90 ? `, about ${Math.round(left / 60)} min left` : `, about ${Math.max(5, Math.round(left))} s left`;
+        }
+        $("uploadBar").hidden = false; $("uploadBar").value = pct;
+        $("uploadStatus").textContent = `OCR: ${j.done} of ${j.total} scanned pages done (${pct}%)${eta}. Keep this tab open.`;
+      } else {
+        $("uploadBar").hidden = true;
+        $("uploadStatus").textContent = j.stage + "... you can keep this tab open while it works.";
+      }
     }
     $("uploadStatus").textContent = "Stored: " + d.filename;
     popup(d.stopped ? "⏹️" : "✅", d.stopped ? "Stopped early: partly inserted" : "PDF inserted",
@@ -268,7 +283,7 @@ $("uploadBtn").onclick = async () => {
   } catch (e) {
     $("uploadStatus").textContent = "";
     popup("⚠️", "Upload failed", String(e.message || e), "Close");
-  } finally { $("uploadBtn").disabled = false; $("stopBtn").hidden = true; }
+  } finally { $("uploadBtn").disabled = false; $("stopBtn").hidden = true; $("uploadBar").hidden = true; }
 };
 
 async function loadKb() {

@@ -69,17 +69,18 @@ def _ocr_pages(data: bytes, page_numbers: List[int], progress=lambda stage, done
 
     engine = _ocr_engine()
     found = {}
+    progress("Reading scanned pages with OCR", 0, len(page_numbers))
     with pymupdf.open(stream=data, filetype="pdf") as doc:
         for i, n in enumerate(page_numbers):
             if should_stop():
                 return found, i
-            progress("Reading scanned pages with OCR", i, len(page_numbers))
             pix = doc[n - 1].get_pixmap(dpi=200, colorspace=pymupdf.csRGB, alpha=False)
             img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, 3)
             result, _ = engine(img)
             text = "\n".join(line[1] for line in (result or [])).strip()
             if text:
                 found[n] = text
+            progress("Reading scanned pages with OCR", i + 1, len(page_numbers))  # pages finished so far
     return found, len(page_numbers)
 
 

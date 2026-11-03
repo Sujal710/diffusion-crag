@@ -9,12 +9,15 @@ CRAG pipeline as a LangGraph state machine.
                            --wrong--> reframe_question -> retrieve   (whole pipeline again)
 """
 import asyncio
+import json
+import os
 import re
 from typing import List, Literal, Optional, TypedDict
 
 from langchain_core.documents import Document
 from langgraph.graph import END, START, StateGraph
-from tavily import AsyncTavilyClient
+from mcp import ClientSession
+from mcp.client.sse import sse_client
 
 from . import llm, vectorstore
 from .config import get_settings
@@ -72,6 +75,21 @@ async def _refine(question: str, texts: List[str]) -> str:
     return "\n".join(kept)
 
 
+MCP_SSE_URL = os.getenv("MCP_SSE_URL", "http://127.0.0.1:8001/sse")
+
+
+async def _mcp_web_search(query: str, max_results: int) -> List[dict]:
+    """Web search is done ONLY by the MCP server (crag_app.mcp_server); call it over SSE."""
+    async with sse_client(MCP_SSE_URL) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            res = await session.call_tool("web_search", {"query": query, "max_results": max_results})
+    text = "".join(getattr(c, "text", "") for c in res.content)
+    if getattr(res, "is_error", getattr(res, "isError", False)):  # v2 / v1 field name
+        raise RuntimeError(f"MCP web_search failed: {text}")
+    return json.loads(text) if text else []
+
+
 # ---------------------------------------------------------------------------
 # nodes
 # ---------------------------------------------------------------------------
@@ -116,9 +134,7 @@ async def refine_internal(state: CRAGState) -> CRAGState:
 async def web_search(state: CRAGState) -> CRAGState:
     s = get_settings()
     rewritten = await llm.web_query_chain().ainvoke({"question": state["question"]})
-    client = AsyncTavilyClient(api_key=s.tavily_api_key)
-    result = await client.search(rewritten.query, max_results=s.web_results)
-    hits = result.get("results", [])
+    hits = await _mcp_web_search(rewritten.query, s.web_results)
     texts = [h.get("content", "") for h in hits]
     return {
         "external_knowledge": await _refine(state["question"], texts),
