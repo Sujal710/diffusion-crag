@@ -3,6 +3,8 @@
 .env.*
 !.env.example
 crag_app/*.txt
+*.pem
+*.key
 
 # Python / environments
 .venv/

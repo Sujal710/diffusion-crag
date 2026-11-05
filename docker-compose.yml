@@ -1,0 +1,14 @@
+services:
+  crag:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file: .env            # your API keys and JWT_SECRET; not copied into the image
+    restart: unless-stopped
+    volumes:
+      - crag_data:/app/crag_app/data        # user accounts survive restarts
+      - crag_outputs:/app/crag_app/outputs  # generated videos and frames
+
+volumes:
+  crag_data:
+  crag_outputs:

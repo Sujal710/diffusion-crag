@@ -1,0 +1,19 @@
+# Secrets and local state: must never be baked into the image
+.env
+.env.*
+!.env.example
+crag_app/*.txt
+*.pem
+*.key
+crag_app/data/
+crag_app/outputs/
+
+# Environments, caches, version control
+.venv/
+__pycache__/
+*.pyc
+.git/
+.gitignore
+Dockerfile
+docker-compose.yml
+README.md
