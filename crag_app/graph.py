@@ -15,6 +15,7 @@ import re
 from typing import List, Literal, Optional, TypedDict
 
 from langchain_core.documents import Document
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 from mcp import ClientSession
 from mcp.client.sse import sse_client
@@ -55,7 +56,9 @@ def _decompose(text: str, sentences_per_strip: int = 2) -> List[str]:
     ]
 
 
-async def _refine(question: str, texts: List[str]) -> str:
+# Every node below takes `config` and hands it to its model calls. On Python < 3.11 this is what
+# keeps those calls inside the same MLflow trace as the node; without it each call became its own trace.
+async def _refine(question: str, texts: List[str], config: Optional[RunnableConfig] = None) -> str:
     """Decompose -> filter -> recompose."""
     strips: List[str] = []
     for t in texts:
@@ -67,7 +70,7 @@ async def _refine(question: str, texts: List[str]) -> str:
     numbered = "\n".join(f"[{i}] {s}" for i, s in enumerate(strips))
     try:
         selection = await llm.strip_filter_chain().ainvoke(
-            {"question": question, "strips": numbered}
+            {"question": question, "strips": numbered}, config=config
         )
         kept = [strips[i] for i in selection.keep if 0 <= i < len(strips)]
     except Exception:
@@ -100,14 +103,15 @@ async def retrieve(state: CRAGState) -> CRAGState:
     return {"documents": docs}
 
 
-async def evaluate_documents(state: CRAGState) -> CRAGState:
+async def evaluate_documents(state: CRAGState, config: RunnableConfig) -> CRAGState:
     s = get_settings()
     docs = state.get("documents", [])
     chain = llm.relevance_chain()
 
     async def score(doc: Document) -> float:
         try:
-            r = await chain.ainvoke({"question": state["question"], "document": doc.page_content})
+            r = await chain.ainvoke(
+                {"question": state["question"], "document": doc.page_content}, config=config)
             return max(0.0, min(1.0, r.score))
         except Exception:
             return 0.0
@@ -126,29 +130,34 @@ async def evaluate_documents(state: CRAGState) -> CRAGState:
     return {"scores": scores, "verdict": verdict, "documents": kept}
 
 
-async def refine_internal(state: CRAGState) -> CRAGState:
+async def refine_internal(state: CRAGState, config: RunnableConfig) -> CRAGState:
     texts = [d.page_content for d in state.get("documents", [])]
-    return {"internal_knowledge": await _refine(state["question"], texts)}
+    return {"internal_knowledge": await _refine(state["question"], texts, config)}
 
 
-async def web_search(state: CRAGState) -> CRAGState:
+async def web_search(state: CRAGState, config: RunnableConfig) -> CRAGState:
     s = get_settings()
-    rewritten = await llm.web_query_chain().ainvoke({"question": state["question"]})
-    hits = await _mcp_web_search(rewritten.query, s.web_results)
+    try:
+        query = (await llm.web_query_chain().ainvoke(
+            {"question": state["question"]}, config=config)).query
+    except Exception:  # the small model sometimes answers in plain text instead of the expected format
+        query = state["question"]
+    hits = await _mcp_web_search(query, s.web_results)
     texts = [h.get("content", "") for h in hits]
     return {
-        "external_knowledge": await _refine(state["question"], texts),
+        "external_knowledge": await _refine(state["question"], texts, config),
         "web_sources": [h.get("url", "") for h in hits],
     }
 
 
-async def refine_and_search(state: CRAGState) -> CRAGState:
+async def refine_and_search(state: CRAGState, config: RunnableConfig) -> CRAGState:
     """AMBIGUOUS path: refine internal docs AND search the web, in parallel."""
-    internal, external = await asyncio.gather(refine_internal(state), web_search(state))
+    internal, external = await asyncio.gather(
+        refine_internal(state, config), web_search(state, config))
     return {**internal, **external}
 
 
-async def generate(state: CRAGState) -> CRAGState:
+async def generate(state: CRAGState, config: RunnableConfig) -> CRAGState:
     verdict = state["verdict"]
     parts = []
     if verdict in ("CORRECT", "AMBIGUOUS") and state.get("internal_knowledge"):
@@ -159,18 +168,18 @@ async def generate(state: CRAGState) -> CRAGState:
 
     # Answer the user's ORIGINAL question; the reframed one is only for retrieval.
     msg = await llm.generate_chain().ainvoke(
-        {"question": state["original_question"], "knowledge": knowledge}
+        {"question": state["original_question"], "knowledge": knowledge}, config=config
     )
     return {"knowledge": knowledge, "answer": msg.content}
 
 
-async def check_answer(state: CRAGState) -> CRAGState:
+async def check_answer(state: CRAGState, config: RunnableConfig) -> CRAGState:
     try:
         r = await llm.check_chain().ainvoke({
             "question": state["original_question"],
             "knowledge": state["knowledge"],
             "answer": state["answer"],
-        })
+        }, config=config)
         ok, feedback = r.is_correct, r.feedback
     except Exception as e:
         ok, feedback = True, f"checker failed ({e}); accepting answer"
@@ -189,15 +198,18 @@ async def check_answer(state: CRAGState) -> CRAGState:
     return {"answer_ok": ok, "feedback": feedback, "trace": trace}
 
 
-async def reframe_question(state: CRAGState) -> CRAGState:
-    r = await llm.reframe_chain().ainvoke({
-        "original_question": state["original_question"],
-        "question": state["question"],
-        "feedback": state["feedback"],
-    })
+async def reframe_question(state: CRAGState, config: RunnableConfig) -> CRAGState:
+    try:
+        reframed = (await llm.reframe_chain().ainvoke({
+            "original_question": state["original_question"],
+            "question": state["question"],
+            "feedback": state["feedback"],
+        }, config=config)).question
+    except Exception:  # same plain-text glitch: retry with the current question instead of failing
+        reframed = state["question"]
     # reset per-attempt fields so the next run starts clean
     return {
-        "question": r.question,
+        "question": reframed,
         "attempt": state["attempt"] + 1,
         "documents": [], "scores": [],
         "internal_knowledge": "", "external_knowledge": "", "web_sources": [],
@@ -251,13 +263,18 @@ def build_graph():
 crag_graph = build_graph()
 
 
-async def run_crag(question: str, namespace: Optional[str] = None) -> dict:
+async def run_crag(question: str, namespace: Optional[str] = None,
+                   session_id: Optional[str] = None) -> dict:
     s = get_settings()
+    # each attempt is ~8 steps; give headroom for all attempts
+    config = {"recursion_limit": 10 * s.max_attempts + 10}
+    if session_id:
+        # MLflow tracing groups every trace with the same thread_id into one session
+        config["configurable"] = {"thread_id": session_id}
     final = await crag_graph.ainvoke(
         {"original_question": question, "question": question, "attempt": 1, "trace": [],
          "namespace": namespace},
-        # each attempt is ~8 steps; give headroom for all attempts
-        config={"recursion_limit": 10 * s.max_attempts + 10},
+        config=config,
     )
     return {
         "question": question,

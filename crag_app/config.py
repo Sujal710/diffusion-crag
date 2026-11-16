@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     video_width: int = 1024        # keep both multiples of 64
     video_height: int = 576
 
+    # --- MLflow tracing (optional): records every step of each question. Empty = tracing off. ---
+    mlflow_tracking_uri: str = ""  # e.g. http://127.0.0.1:5000 (where `mlflow server` runs)
+    mlflow_experiment: str = "crag-assistant"
+
     # --- Login (JWT) ---
     jwt_secret: str = ""           # long random string; if empty a temporary one is used (logins reset on restart)
     jwt_expire_minutes: int = 1440 # how long a login stays valid (24 h)

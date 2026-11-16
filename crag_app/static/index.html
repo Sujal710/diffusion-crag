@@ -330,6 +330,9 @@ $("kbSummarise").onclick = async () => {
 };
 loadKb();
 
+// One id per page load: MLflow groups the questions asked in this tab into one session.
+const SESSION_ID = Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+
 // "Convert this answer to video": fill the video prompt with the question + answer and start generating.
 let lastQA = null;
 $("toVideoBtn").onclick = () => {
@@ -384,7 +387,7 @@ $("askBtn").onclick = async () => {
   $("askBtn").disabled = true;
   $("askStatus").textContent = "Thinking... (can take 10-60 seconds)";
   try {
-    const res = await fetch("/ask", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({question, namespace: $("nsSearch").value || null}) });
+    const res = await fetch("/ask", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({question, namespace: $("nsSearch").value || null, session_id: SESSION_ID}) });
     if (!res.ok) throw new Error(await errText(res));
     const d = await res.json();
     $("answer").textContent = d.answer;

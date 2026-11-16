@@ -25,6 +25,9 @@ fonttools>=4.50  # lets pypdf decode CFF Type1 fonts (silences warnings, fixes o
 pymupdf>=1.24
 rapidocr-onnxruntime>=1.2  # newer releases need Python < 3.13; 1.2.x works on 3.13
 
+# --- Tracing (optional): sends traces to an MLflow server; the UI server itself needs `pip install mlflow` ---
+mlflow-tracing>=3.0
+
 # --- Text -> video ---
 huggingface_hub>=0.30
 imageio>=2.34

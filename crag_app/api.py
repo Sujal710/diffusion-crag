@@ -8,14 +8,16 @@ from functools import lru_cache
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from pypdf import PdfReader
 
-from . import auth, llm, vectorstore, video
+from . import auth, llm, observability, vectorstore, video
 from .graph import run_crag
+
+observability.setup_tracing()  # no-op unless MLFLOW_TRACKING_URI is set
 
 app = FastAPI(title="CRAG API", version="1.0")
 app.middleware("http")(auth.auth_middleware)  # every route except auth.PUBLIC_PATHS needs a JWT
@@ -169,6 +171,7 @@ async def _read_pdf(file: UploadFile) -> tuple:
 class AskRequest(BaseModel):
     question: str = Field(min_length=3)
     namespace: Optional[str] = None  # None / empty = search every namespace
+    session_id: Optional[str] = Field(None, pattern=r"^[A-Za-z0-9_-]{1,64}$")  # groups traces in MLflow
 
 
 class IngestRequest(BaseModel):
@@ -337,9 +340,11 @@ async def video_file(job_id: str, name: str):
 
 
 @app.post("/ask")
-async def ask(req: AskRequest):
+async def ask(req: AskRequest, request: Request):
     ns = _check_namespace(req.namespace) if req.namespace else None
+    # MLflow groups traces by this id: one session per logged-in user and browser tab
+    session = f"user{request.state.user['sub']}-{req.session_id or 'default'}"
     try:
-        return await run_crag(req.question, ns)
+        return await run_crag(req.question, ns, session)
     except Exception as e:
         raise HTTPException(500, f"CRAG pipeline failed: {e}")
