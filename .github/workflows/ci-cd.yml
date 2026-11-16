@@ -86,3 +86,57 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # ------------------------------------------------ deploy to the EC2 server
+  deploy:
+    name: Deploy to EC2
+    needs: docker
+    # Only after a push to main; pull requests and tags never deploy.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      EC2_HOST: ${{ secrets.EC2_HOST }}
+      EC2_USER: ${{ secrets.EC2_USER }}
+    steps:
+      - name: Set up SSH key
+        run: |
+          install -m 600 /dev/null key.pem
+          printf '%s\n' "${{ secrets.EC2_SSH_KEY }}" > key.pem
+
+      # Token goes over stdin, so it never shows up in a process list or the logs.
+      - name: Log in to Docker Hub on the server
+        run: |
+          printf '%s' "${{ secrets.DOCKERHUB_TOKEN }}" | ssh -i key.pem -o StrictHostKeyChecking=accept-new \
+            "$EC2_USER@$EC2_HOST" "docker login -u '${{ secrets.DOCKERHUB_USERNAME }}' --password-stdin"
+
+      - name: Pull the image and restart the container
+        run: |
+          ssh -i key.pem -o StrictHostKeyChecking=accept-new "$EC2_USER@$EC2_HOST" \
+            "IMAGE=${{ env.IMAGE }}:latest bash -s" <<'REMOTE'
+          set -e
+          docker pull "$IMAGE"
+          docker rm -f crag 2>/dev/null || true
+          docker run -d --name crag --restart unless-stopped \
+            -p 8000:8000 --env-file "$HOME/crag/.env" \
+            -v crag_data:/app/crag_app/data \
+            -v crag_outputs:/app/crag_app/outputs \
+            "$IMAGE"
+          docker image prune -f
+          REMOTE
+
+      - name: Wait for the app to answer
+        run: |
+          for i in $(seq 1 12); do
+            if ssh -i key.pem -o StrictHostKeyChecking=accept-new "$EC2_USER@$EC2_HOST" \
+                 "curl -fsS http://localhost:8000/health"; then
+              echo; echo "App is up."; exit 0
+            fi
+            sleep 10
+          done
+          echo "App did not become healthy in 2 minutes." >&2
+          ssh -i key.pem "$EC2_USER@$EC2_HOST" "docker logs crag --tail 50" || true
+          exit 1
+
+      - name: Remove SSH key
+        if: always()
+        run: rm -f key.pem
