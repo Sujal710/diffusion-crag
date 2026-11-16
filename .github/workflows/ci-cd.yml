@@ -99,9 +99,13 @@ jobs:
       EC2_USER: ${{ secrets.EC2_USER }}
     steps:
       - name: Set up SSH key
+        env:
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
         run: |
           install -m 600 /dev/null key.pem
-          printf '%s\n' "${{ secrets.EC2_SSH_KEY }}" > key.pem
+          # Strip Windows line endings, then make sure the file ends with a newline.
+          printf '%s\n' "$EC2_SSH_KEY" | tr -d '\r' > key.pem
+          ssh-keygen -y -f key.pem > /dev/null && echo "SSH key looks valid."
 
       # Token goes over stdin, so it never shows up in a process list or the logs.
       - name: Log in to Docker Hub on the server
